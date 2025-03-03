@@ -12,6 +12,7 @@ import (
 	"gitlab-status/db"
 	"gitlab-status/gitlab"
 	"gitlab-status/models"
+	"gitlab-status/templates"
 )
 
 // StatusPageHandler handles the status page request
@@ -34,16 +35,8 @@ func StatusPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL, t
 
 	// If no projects are selected yet, show a message
 	if len(selectedProjects) == 0 {
-		// If HTMX request, render partial with empty list
-		if c.Request().Header.Get("HX-Request") != "" {
-			return c.Render(http.StatusOK, "status_partial.html", statuses)
-		}
-
-		return c.Render(http.StatusOK, "status.html", map[string]interface{}{
-			"Statuses":   statuses,
-			"Username":   session.Values["username"],
-			"NoProjects": true,
-		})
+		// Return status template with no projects flag
+		return templates.Status(session.Values["username"].(string), true, statuses).Render(c.Request().Context(), c.Response().Writer)
 	}
 
 	for _, selectedProject := range selectedProjects {
@@ -116,13 +109,10 @@ func StatusPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL, t
 		})
 	}
 
-	// If the request is an HTMX request, render the partial
+	// If the request is an HTMX request, render the partial table only
 	if c.Request().Header.Get("HX-Request") != "" {
-		return c.Render(http.StatusOK, "status_partial.html", statuses)
+		return templates.StatusTable(statuses).Render(c.Request().Context(), c.Response().Writer)
 	}
 
-	return c.Render(http.StatusOK, "status.html", map[string]interface{}{
-		"Statuses": statuses,
-		"Username": session.Values["username"],
-	})
+	return templates.Status(session.Values["username"].(string), false, statuses).Render(c.Request().Context(), c.Response().Writer)
 }

@@ -103,7 +103,8 @@ func CacheGitLabStructure(groups []models.Group, projects []models.Project) erro
 	defer tx.Rollback()
 
 	// Clear existing cached groups for all users - make data available to everyone
-	_, err = tx.NewDelete().Model((*models.CachedGroup)(nil)).Exec(ctx)
+	// FIX: Add a "where true" condition to satisfy BUN's requirement for a WHERE clause
+	_, err = tx.NewDelete().Model((*models.CachedGroup)(nil)).Where("1 = 1").Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to clear cached groups: %v", err)
 	}
@@ -129,7 +130,8 @@ func CacheGitLabStructure(groups []models.Group, projects []models.Project) erro
 	}
 
 	// Clear existing cached projects for all users - make data available to everyone
-	_, err = tx.NewDelete().Model((*models.CachedProject)(nil)).Exec(ctx)
+	// FIX: Add a "where true" condition to satisfy BUN's requirement for a WHERE clause
+	_, err = tx.NewDelete().Model((*models.CachedProject)(nil)).Where("1 = 1").Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to clear cached projects: %v", err)
 	}

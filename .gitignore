@@ -2,3 +2,4 @@
 .env
 CLAUDE.md
 *.db
+*_templ.go

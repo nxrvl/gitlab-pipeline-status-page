@@ -1,0 +1,9 @@
+.idea/
+.env
+CLAUDE.md
+*.db
+*_templ.go
+go.mod/
+go.mod
+.git/
+.dlcatignore

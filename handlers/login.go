@@ -8,11 +8,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"gitlab-status/db"
+	"gitlab-status/templates"
 )
 
 // LoginPageHandler handles the login page request
 func LoginPageHandler(c echo.Context) error {
-	return c.Render(http.StatusOK, "login.html", nil)
+	return templates.Login("").Render(c.Request().Context(), c.Response().Writer)
 }
 
 // LoginSubmitHandler handles the login form submission
@@ -23,16 +24,12 @@ func LoginSubmitHandler(c echo.Context, store *sessions.CookieStore) error {
 	// Check if user exists
 	user, err := db.GetUserByName(username)
 	if err != nil {
-		return c.Render(http.StatusUnauthorized, "login.html", map[string]interface{}{
-			"Error": "Invalid username or password",
-		})
+		return templates.Login("Invalid username or password").Render(c.Request().Context(), c.Response().Writer)
 	}
 
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return c.Render(http.StatusUnauthorized, "login.html", map[string]interface{}{
-			"Error": "Invalid username or password",
-		})
+		return templates.Login("Invalid username or password").Render(c.Request().Context(), c.Response().Writer)
 	}
 
 	// Create session
@@ -41,9 +38,7 @@ func LoginSubmitHandler(c echo.Context, store *sessions.CookieStore) error {
 	session.Values["username"] = username
 	session.Values["user_id"] = user.ID
 	if err := session.Save(c.Request(), c.Response()); err != nil {
-		return c.Render(http.StatusInternalServerError, "login.html", map[string]interface{}{
-			"Error": "Failed to create session",
-		})
+		return templates.Login("Failed to create session").Render(c.Request().Context(), c.Response().Writer)
 	}
 
 	// Redirect to status page
@@ -63,8 +58,8 @@ func LogoutHandler(c echo.Context, store *sessions.CookieStore) error {
 func AuthMiddleware(store *sessions.CookieStore) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			// Skip authentication for login page
-			if c.Path() == "/login" {
+			// Skip authentication for login page and static assets
+			if c.Path() == "/login" || c.Path() == "/favicon.ico" {
 				return next(c)
 			}
 

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	_ "github.com/a-h/templ"
 	"github.com/gorilla/sessions"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -14,7 +15,6 @@ import (
 	"gitlab-status/db"
 	"gitlab-status/gitlab"
 	"gitlab-status/handlers"
-	"gitlab-status/templates"
 )
 
 func main() {
@@ -95,9 +95,6 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	// Set up template renderer
-	e.Renderer = templates.NewRenderer()
-
 	// Set up middleware
 	e.Use(handlers.AuthMiddleware(store))
 
@@ -120,65 +117,52 @@ func main() {
 
 	// Settings routes
 	e.GET("/settings", func(c echo.Context) error {
-		return handlers.SettingsPageHandler(c, store)
+		return handlers.SettingsPageHandler(c, store, gitlabURL)
 	})
 	e.GET("/settings/projects", func(c echo.Context) error {
-		return handlers.ProjectsPageHandler(c, store)
+		return handlers.ProjectsPageHandler(c, store, gitlabURL)
 	})
-	e.POST("/settings/cache", func(c echo.Context) error {
-		return handlers.StartCacheHandler(c, store, gitlabURL, token)
-	})
-	e.GET("/settings/cache/status", func(c echo.Context) error {
-		return handlers.CacheStatusHandler(c)
+	e.GET("/settings/cache", func(c echo.Context) error {
+		return handlers.CacheHandler(c, store, gitlabURL, token)
 	})
 	e.POST("/settings", func(c echo.Context) error {
 		return handlers.SaveSettingsHandler(c, store)
 	})
 
-	// Determine the port
+	// Start the server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
-	// Start the server
 	e.Logger.Fatal(e.Start(":" + port))
 }
 
-// startBackgroundCacheJob starts a goroutine that updates the project structure every 30 minutes
+// startBackgroundCacheJob starts a background job to update the GitLab structure cache periodically
 func startBackgroundCacheJob(gitlabURL, token string) {
-	log.Println("Starting background job to update project structure every 30 minutes")
-
-	ticker := time.NewTicker(30 * time.Minute)
-
-	// Run the first update immediately
 	go func() {
-		log.Printf("Running initial GitLab structure cache")
-		// Fetch groups and projects
+		// Do initial cache update
+		log.Println("Starting initial GitLab structure cache update...")
 		groups, err := gitlab.FetchGroups(gitlabURL, token)
 		if err != nil {
 			log.Printf("Error fetching groups: %v", err)
-			return
+		} else {
+			projects, err := gitlab.FetchProjects(gitlabURL, token)
+			if err != nil {
+				log.Printf("Error fetching projects: %v", err)
+			} else {
+				err = db.CacheGitLabStructure(groups, projects)
+				if err != nil {
+					log.Printf("Error caching GitLab structure: %v", err)
+				} else {
+					log.Printf("Successfully cached GitLab structure: %d groups, %d projects", len(groups), len(projects))
+				}
+			}
 		}
 
-		projects, err := gitlab.FetchProjects(gitlabURL, token)
-		if err != nil {
-			log.Printf("Error fetching projects: %v", err)
-			return
-		}
-
-		// Store in database
-		err = db.CacheGitLabStructure(groups, projects)
-		if err != nil {
-			log.Printf("Error caching GitLab structure: %v", err)
-		}
-	}()
-
-	// Run updates on schedule
-	go func() {
+		// Set up ticker for periodic updates (every 30 minutes)
+		ticker := time.NewTicker(30 * time.Minute)
 		for range ticker.C {
-			log.Printf("Running scheduled GitLab structure cache update")
-			// Fetch groups and projects
+			log.Println("Running periodic GitLab structure cache update...")
 			groups, err := gitlab.FetchGroups(gitlabURL, token)
 			if err != nil {
 				log.Printf("Error fetching groups: %v", err)
@@ -191,11 +175,13 @@ func startBackgroundCacheJob(gitlabURL, token string) {
 				continue
 			}
 
-			// Store in database
 			err = db.CacheGitLabStructure(groups, projects)
 			if err != nil {
 				log.Printf("Error caching GitLab structure: %v", err)
+				continue
 			}
+
+			log.Printf("Successfully updated GitLab structure cache: %d groups, %d projects", len(groups), len(projects))
 		}
 	}()
 }
