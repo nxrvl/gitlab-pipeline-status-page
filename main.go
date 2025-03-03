@@ -1,86 +1,21 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"html/template"
-	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
-	"strings"
+	"strconv"
 	"time"
 
+	"github.com/gorilla/sessions"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+
+	"gitlab-status/db"
+	"gitlab-status/gitlab"
+	"gitlab-status/handlers"
+	"gitlab-status/templates"
 )
-
-// Pipeline represents a simplified GitLab pipeline.
-type Pipeline struct {
-	ID        int       `json:"id"`
-	Ref       string    `json:"ref"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// RepositoryStatus holds the data to be displayed for each repository.
-type RepositoryStatus struct {
-	RepositoryName string
-	Version        string
-	PipelineID     int
-	Status         string
-	Date           time.Time
-}
-
-// TemplateRenderer is a custom HTML templating renderer for Echo.
-type TemplateRenderer struct {
-	templates *template.Template
-}
-
-// Render renders a template document.
-func (t *TemplateRenderer) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
-	return t.templates.ExecuteTemplate(w, name, data)
-}
-
-// fetchLatestPipeline calls the GitLab API to get the latest pipeline for a project.
-func fetchLatestPipeline(gitlabURL, project, token string) (*Pipeline, error) {
-	encodedProject := url.PathEscape(project)
-	apiURL := fmt.Sprintf("%s/api/v4/projects/%s/pipelines?per_page=1", gitlabURL, encodedProject)
-
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch pipeline for project %s: %s", project, resp.Status)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var pipelines []Pipeline
-	if err := json.Unmarshal(body, &pipelines); err != nil {
-		return nil, err
-	}
-	if len(pipelines) == 0 {
-		return nil, fmt.Errorf("no pipelines found for project %s", project)
-	}
-	return &pipelines[0], nil
-}
 
 func main() {
 	// Load environment variables from .env file.
@@ -92,87 +27,175 @@ func main() {
 	gitlabURL := os.Getenv("GITLAB_URL")
 	if gitlabURL == "" {
 		gitlabURL = "https://gitlab.example.com" // update with your GitLab instance URL
+		log.Printf("GITLAB_URL not set, using default: %s", gitlabURL)
 	}
+	log.Printf("Using GitLab URL: %s", gitlabURL)
 	token := os.Getenv("GITLAB_TOKEN")
 	if token == "" {
 		log.Fatal("GITLAB_TOKEN not set")
 	}
 
-	// Get basic auth credentials.
-	authUser := os.Getenv("BASIC_AUTH_USER")
-	if authUser == "" {
-		authUser = "admin"
-	}
-	authPass := os.Getenv("BASIC_AUTH_PASS")
-	if authPass == "" {
-		authPass = "password"
+	// Get API timeout from environment
+	timeoutStr := os.Getenv("GITLAB_API_TIMEOUT")
+	timeout := 300 * time.Second // Default timeout: 300 seconds
+	if timeoutStr != "" {
+		if timeoutSec, err := strconv.Atoi(timeoutStr); err == nil && timeoutSec > 0 {
+			timeout = time.Duration(timeoutSec) * time.Second
+			log.Printf("Setting GitLab API timeout to %d seconds", timeoutSec)
+		}
 	}
 
-	// Get repositories list from environment (comma separated).
-	var repositories []string
-	if reposStr := os.Getenv("REPOSITORIES"); reposStr != "" {
-		repositories = strings.Split(reposStr, ",")
-	} else {
-		repositories = []string{
-			"group1/project1",
-			"group2/project2",
-		}
+	// Initialize GitLab client
+	gitlab.Initialize(timeout)
+
+	// Set up SQLite database
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "gitlab-status.db" // Default SQLite database file
+	}
+
+	// Initialize database
+	if err := db.Initialize(dbPath); err != nil {
+		log.Fatal("Failed to initialize database: ", err)
+	}
+
+	// Set up initial user
+	defaultUser := os.Getenv("DEFAULT_USERNAME")
+	if defaultUser == "" {
+		defaultUser = "admin"
+	}
+	defaultPass := os.Getenv("DEFAULT_PASSWORD")
+	if defaultPass == "" {
+		defaultPass = "password"
+	}
+
+	if err := db.CreateDefaultUser(defaultUser, defaultPass); err != nil {
+		log.Fatal("Failed to create default user: ", err)
+	}
+
+	// Start background job to update cache every 30 minutes
+	startBackgroundCacheJob(gitlabURL, token)
+
+	// Get session secret
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		sessionSecret = "mysessionsecret" // Should be changed in production
+	}
+
+	// Initialize the session store
+	store := sessions.NewCookieStore([]byte(sessionSecret))
+	store.Options = &sessions.Options{
+		Path:     "/",
+		MaxAge:   86400 * 7, // 7 days
+		HttpOnly: true,
 	}
 
 	// Initialize Echo.
 	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
 
-	// Setup basic auth middleware.
-	e.Use(middleware.BasicAuth(func(user, pass string, c echo.Context) (bool, error) {
-		if user == authUser && pass == authPass {
-			return true, nil
-		}
-		return false, nil
-	}))
+	// Set up template renderer
+	e.Renderer = templates.NewRenderer()
 
-	// Initialize the templating renderer using the "templ" library (Go's html/template).
-	renderer := &TemplateRenderer{
-		templates: template.Must(template.ParseGlob("templates/*.html")),
-	}
-	e.Renderer = renderer
+	// Set up middleware
+	e.Use(handlers.AuthMiddleware(store))
 
-	// Handler for the status page.
-	e.GET("/", func(c echo.Context) error {
-		var statuses []RepositoryStatus
-		for _, repo := range repositories {
-			pipeline, err := fetchLatestPipeline(gitlabURL, strings.TrimSpace(repo), token)
-			if err != nil {
-				log.Printf("Error fetching pipeline for %s: %v", repo, err)
-				// Display a row with error info if pipeline fetch fails.
-				statuses = append(statuses, RepositoryStatus{
-					RepositoryName: repo,
-					Version:        "N/A",
-					PipelineID:     0,
-					Status:         "Error",
-					Date:           time.Time{},
-				})
-				continue
-			}
-			statuses = append(statuses, RepositoryStatus{
-				RepositoryName: repo,
-				Version:        pipeline.Ref,
-				PipelineID:     pipeline.ID,
-				Status:         pipeline.Status,
-				Date:           pipeline.CreatedAt,
-			})
-		}
-
-		// If the request is an HTMX request, render the partial.
-		if c.Request().Header.Get("HX-Request") != "" {
-			return c.Render(http.StatusOK, "status_partial.html", statuses)
-		}
-		return c.Render(http.StatusOK, "status.html", statuses)
+	// Set up routes
+	// Authentication routes
+	e.GET("/login", func(c echo.Context) error {
+		return handlers.LoginPageHandler(c)
+	})
+	e.POST("/login", func(c echo.Context) error {
+		return handlers.LoginSubmitHandler(c, store)
+	})
+	e.GET("/logout", func(c echo.Context) error {
+		return handlers.LogoutHandler(c, store)
 	})
 
-	// Determine the port.
+	// Status page route
+	e.GET("/", func(c echo.Context) error {
+		return handlers.StatusPageHandler(c, store, gitlabURL, token)
+	})
+
+	// Settings routes
+	e.GET("/settings", func(c echo.Context) error {
+		return handlers.SettingsPageHandler(c, store)
+	})
+	e.GET("/settings/projects", func(c echo.Context) error {
+		return handlers.ProjectsPageHandler(c, store)
+	})
+	e.POST("/settings/cache", func(c echo.Context) error {
+		return handlers.StartCacheHandler(c, store, gitlabURL, token)
+	})
+	e.GET("/settings/cache/status", func(c echo.Context) error {
+		return handlers.CacheStatusHandler(c)
+	})
+	e.POST("/settings", func(c echo.Context) error {
+		return handlers.SaveSettingsHandler(c, store)
+	})
+
+	// Determine the port
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+
+	// Start the server
 	e.Logger.Fatal(e.Start(":" + port))
+}
+
+// startBackgroundCacheJob starts a goroutine that updates the project structure every 30 minutes
+func startBackgroundCacheJob(gitlabURL, token string) {
+	log.Println("Starting background job to update project structure every 30 minutes")
+
+	ticker := time.NewTicker(30 * time.Minute)
+
+	// Run the first update immediately
+	go func() {
+		log.Printf("Running initial GitLab structure cache")
+		// Fetch groups and projects
+		groups, err := gitlab.FetchGroups(gitlabURL, token)
+		if err != nil {
+			log.Printf("Error fetching groups: %v", err)
+			return
+		}
+
+		projects, err := gitlab.FetchProjects(gitlabURL, token)
+		if err != nil {
+			log.Printf("Error fetching projects: %v", err)
+			return
+		}
+
+		// Store in database
+		err = db.CacheGitLabStructure(groups, projects)
+		if err != nil {
+			log.Printf("Error caching GitLab structure: %v", err)
+		}
+	}()
+
+	// Run updates on schedule
+	go func() {
+		for range ticker.C {
+			log.Printf("Running scheduled GitLab structure cache update")
+			// Fetch groups and projects
+			groups, err := gitlab.FetchGroups(gitlabURL, token)
+			if err != nil {
+				log.Printf("Error fetching groups: %v", err)
+				continue
+			}
+
+			projects, err := gitlab.FetchProjects(gitlabURL, token)
+			if err != nil {
+				log.Printf("Error fetching projects: %v", err)
+				continue
+			}
+
+			// Store in database
+			err = db.CacheGitLabStructure(groups, projects)
+			if err != nil {
+				log.Printf("Error caching GitLab structure: %v", err)
+			}
+		}
+	}()
 }
