@@ -1,0 +1,22 @@
+<table class="table table-striped">
+    <thead>
+    <tr>
+        <th>Repository Name</th>
+        <th>Version</th>
+        <th>Pipeline</th>
+        <th>Status</th>
+        <th>Date</th>
+    </tr>
+    </thead>
+    <tbody>
+    {{range .}}
+    <tr>
+        <td>{{.RepositoryName}}</td>
+        <td>{{.Version}}</td>
+        <td>{{.PipelineID}}</td>
+        <td>{{.Status}}</td>
+        <td>{{.Date.Format "2006-01-02 15:04:05"}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+</table>
