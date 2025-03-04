@@ -122,6 +122,12 @@ func main() {
 	e.GET("/render-groups", func(c echo.Context) error {
 		return handlers.RenderGroupsHandler(c, store, gitlabURL)
 	})
+	e.GET("/settings/download", func(c echo.Context) error {
+		return handlers.DownloadStructureHandler(c, store)
+	})
+	e.GET("/settings/download-path-structure", func(c echo.Context) error {
+		return handlers.ProjectsMdStructureHandler(c, store)
+	})
 	e.GET("/settings/projects", func(c echo.Context) error {
 		return handlers.ProjectsPageHandler(c, store, gitlabURL)
 	})

@@ -120,7 +120,16 @@ templ Settings(username string, treeView bool, caching bool, apiError string, gi
                                 </a>
                             }
                         </div>
-                        <div class="ms-2">
+                        <div class="d-flex gap-2 ms-2">
+                            <div class="dropdown">
+                                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="downloadDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="bi bi-download"></i> Download
+                                </button>
+                                <ul class="dropdown-menu" aria-labelledby="downloadDropdown">
+                                    <li><a class="dropdown-item" href="/settings/download">Group Structure</a></li>
+                                    <li><a class="dropdown-item" href="/settings/download-path-structure">Project Path Structure</a></li>
+                                </ul>
+                            </div>
                             <a href="/settings/cache" class="btn btn-outline-primary btn-sm">
                                 <i class="bi bi-arrow-clockwise"></i> Refresh Data
                             </a>
