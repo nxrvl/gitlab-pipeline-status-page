@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/gob"
 	"log"
 	"os"
 	"strconv"
@@ -16,6 +17,11 @@ import (
 	"gitlab-status/gitlab"
 	"gitlab-status/handlers"
 )
+
+func init() {
+	// Register map[string]bool for storing expanded path information
+	gob.Register(map[string]bool{})
+}
 
 func main() {
 	// Load environment variables from .env file.
@@ -119,14 +125,8 @@ func main() {
 	e.GET("/settings", func(c echo.Context) error {
 		return handlers.SettingsPageHandler(c, store, gitlabURL)
 	})
-	e.GET("/render-groups", func(c echo.Context) error {
-		return handlers.RenderGroupsHandler(c, store, gitlabURL)
-	})
-	e.GET("/settings/download", func(c echo.Context) error {
-		return handlers.DownloadStructureHandler(c, store)
-	})
-	e.GET("/settings/download-path-structure", func(c echo.Context) error {
-		return handlers.ProjectsMdStructureHandler(c, store)
+	e.GET("/render-path-tree", func(c echo.Context) error {
+		return handlers.RenderPathTreeHandler(c, store, gitlabURL)
 	})
 	e.GET("/settings/projects", func(c echo.Context) error {
 		return handlers.ProjectsPageHandler(c, store, gitlabURL)

@@ -185,12 +185,12 @@ templ Settings(username string, treeView bool, caching bool, apiError string, gi
                                                name="search"
                                                placeholder="Search for groups or projects..."
                                                value={ searchTerm }
-                                               hx-get="/settings"
+                                               hx-get="/render-path-tree"
                                                hx-trigger="keyup changed delay:500ms"
                                                hx-target="#group-tree-container"
                                                hx-include="[name='search']"/>
                                         <button class="btn btn-outline-secondary" type="button"
-                                                hx-get="/settings"
+                                                hx-get="/render-path-tree"
                                                 hx-target="#group-tree-container"
                                                 onclick="document.getElementById('searchInput').value = ''">
                                             <i class="bi bi-x"></i>
@@ -263,23 +263,23 @@ templ renderGroups(groups []models.Group) {
                                    type="checkbox"
                                    id={ "group-" + strconv.Itoa(group.ID) }
                                    checked?={ group.Selected }
-                                   hx-get={ "/settings?action=select&groupID=" + strconv.Itoa(group.ID) + "&select=" + strconv.FormatBool(!group.Selected) }
+                                   hx-get={ "/render-path-tree?action=select&path=" + group.FullPath + "&select=" + strconv.FormatBool(!group.Selected) }
                                    hx-target="#group-tree-container"/>
                         </div>
 
                         <!-- Expand/collapse control -->
                         if group.HasChildren {
                             if group.Expanded {
-                                <a href={ templ.SafeURL("/settings?action=collapse&groupID=" + strconv.Itoa(group.ID)) }
+                                <a href="#"
                                    class="text-decoration-none me-2"
-                                   hx-get={ "/settings?action=collapse&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-get={ "/render-path-tree?action=collapse&path=" + group.FullPath }
                                    hx-target="#group-tree-container">
                                     <i class="bi bi-dash-square"></i>
                                 </a>
                             } else {
-                                <a href={ templ.SafeURL("/settings?action=expand&groupID=" + strconv.Itoa(group.ID)) }
+                                <a href="#"
                                    class="text-decoration-none me-2"
-                                   hx-get={ "/settings?action=expand&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-get={ "/render-path-tree?action=expand&path=" + group.FullPath }
                                    hx-target="#group-tree-container">
                                     <i class="bi bi-plus-square"></i>
                                 </a>
@@ -307,7 +307,7 @@ templ renderGroups(groups []models.Group) {
                                    type="checkbox"
                                    id={ "group-" + strconv.Itoa(group.ID) }
                                    checked?={ group.Selected }
-                                   hx-get={ "/settings?action=select&groupID=" + strconv.Itoa(group.ID) + "&select=" + strconv.FormatBool(!group.Selected) }
+                                   hx-get={ "/render-path-tree?action=select&path=" + group.FullPath + "&select=" + strconv.FormatBool(!group.Selected) }
                                    hx-target="#group-tree-container"/>
                         </div>
 
@@ -316,14 +316,14 @@ templ renderGroups(groups []models.Group) {
                             if group.Expanded {
                                 <a href="#"
                                    class="text-decoration-none me-2"
-                                   hx-get={ "/settings?action=collapse&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-get={ "/render-path-tree?action=collapse&path=" + group.FullPath }
                                    hx-target="#group-tree-container">
-                                    <i class="bi bi-dash-square"></i>
+                                   <i class="bi bi-dash-square"></i>
                                 </a>
                             } else {
                                 <a href="#"
                                    class="text-decoration-none me-2"
-                                   hx-get={ "/settings?action=expand&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-get={ "/render-path-tree?action=expand&path=" + group.FullPath }
                                    hx-target="#group-tree-container">
                                     <i class="bi bi-plus-square"></i>
                                 </a>
