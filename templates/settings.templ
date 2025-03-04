@@ -5,41 +5,61 @@ import (
 	"strconv"
 )
 
-templ Settings(username string, treeView bool, caching bool, apiError string, gitLabURL string, groupTree []models.Group, projects []models.Project) {
-	<!DOCTYPE html>
-	<html lang="en">
-	<head>
-		<meta charset="UTF-8"/>
-		<title>Settings - GitLab Pipeline Status</title>
-		<!-- Bootstrap 5 CSS -->
-		<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
-		<!-- Bootstrap Icons -->
-		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css"/>
-		<!-- Bootstrap JS Bundle -->
-		<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-		<style>
-			.project-list {
-				max-height: 600px;
-				overflow-y: auto;
-			}
-			.search-box {
-				position: sticky;
-				top: 0;
-				z-index: 100;
-				background-color: white;
-				padding: 10px 0;
-			}
-			.group-tree .list-group-item {
-				border-radius: 0;
-				border-left: 0;
-				border-right: 0;
-			}
-			.indented-item {
-				border-left: 1px solid #dee2e6 !important;
-			}
-		</style>
-	</head>
-	<body>
+templ Settings(username string, treeView bool, caching bool, apiError string, gitLabURL string, groupTree []models.Group, projects []models.Project, searchTerm string) {
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8"/>
+        <title>Settings - GitLab Pipeline Status</title>
+        <!-- Bootstrap 5 CSS -->
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+        <!-- Bootstrap Icons -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css"/>
+        <!-- Bootstrap JS Bundle -->
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <!-- HTMX -->
+        <script src="https://unpkg.com/htmx.org@1.9.0"></script>
+        <style>
+            .project-list {
+                max-height: 600px;
+                overflow-y: auto;
+            }
+            .search-box {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                background-color: white;
+                padding: 10px 0;
+            }
+            .group-tree .list-group-item {
+                border-radius: 0;
+                border-left: 0;
+                border-right: 0;
+            }
+            .indented-item {
+                border-left: 1px solid #dee2e6 !important;
+            }
+            .pipeline-hover {
+                cursor: pointer;
+                position: relative;
+            }
+            .hover-content {
+                display: none;
+                position: absolute;
+                background-color: #f9f9f9;
+                min-width: 300px;
+                box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+                padding: 12px;
+                z-index: 1;
+                border-radius: 4px;
+                right: 0;
+            }
+            .pipeline-hover:hover .hover-content {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
 		<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
 			<div class="container">
 				<a class="navbar-brand" href="/">GitLab Pipeline Status</a>
@@ -67,50 +87,50 @@ templ Settings(username string, treeView bool, caching bool, apiError string, gi
 					</ul>
 				</div>
 			</div>
-		</nav>
+        </nav>
 
-		<div class="container my-4">
-			<div class="d-flex justify-content-between align-items-center mb-4">
-				<h1>Settings</h1>
-				<div>
-					<a href="/" class="btn btn-outline-secondary btn-sm">
-						<i class="bi bi-arrow-left"></i> Back to Status
-					</a>
-				</div>
-			</div>
+        <div class="container my-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1>Settings</h1>
+                <div>
+                    <a href="/" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back to Status
+                    </a>
+                </div>
+            </div>
 
-			<div class="card">
-				<div class="card-header">
-					<div class="d-flex justify-content-between align-items-center">
-						<h5 class="mb-0">Project Selection</h5>
-						<div class="btn-group" role="group">
-							if treeView {
-								<a href="/settings" class="btn btn-outline-secondary btn-sm active">
-									<i class="bi bi-diagram-3"></i> Group Tree
-								</a>
-								<a href="/settings/projects" class="btn btn-outline-secondary btn-sm">
-									<i class="bi bi-list"></i> All Projects
-								</a>
-							} else {
-								<a href="/settings" class="btn btn-outline-secondary btn-sm">
-									<i class="bi bi-diagram-3"></i> Group Tree
-								</a>
-								<a href="/settings/projects" class="btn btn-outline-secondary btn-sm active">
-									<i class="bi bi-list"></i> All Projects
-								</a>
-							}
-						</div>
-						<div class="ms-2">
-							<a href="/settings/cache" class="btn btn-outline-primary btn-sm">
-								<i class="bi bi-arrow-clockwise"></i> Refresh Data
-							</a>
-						</div>
-					</div>
-				</div>
-				<div class="card-body">
-					<p>Select the GitLab projects you want to monitor on the status page.</p>
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Project Selection</h5>
+                        <div class="btn-group" role="group">
+                            if treeView {
+                                <a href="/settings" class="btn btn-outline-secondary btn-sm active">
+                                    <i class="bi bi-diagram-3"></i> Group Tree
+                                </a>
+                                <a href="/settings/projects" class="btn btn-outline-secondary btn-sm">
+                                    <i class="bi bi-list"></i> All Projects
+                                </a>
+                            } else {
+                                <a href="/settings" class="btn btn-outline-secondary btn-sm">
+                                    <i class="bi bi-diagram-3"></i> Group Tree
+                                </a>
+                                <a href="/settings/projects" class="btn btn-outline-secondary btn-sm active">
+                                    <i class="bi bi-list"></i> All Projects
+                                </a>
+                            }
+                        </div>
+                        <div class="ms-2">
+                            <a href="/settings/cache" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Data
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p>Select the GitLab projects you want to monitor on the status page.</p>
 
-					if caching {
+                    if caching {
 						<div class="alert alert-info">
 							<h5 class="alert-heading"><i class="bi bi-info-circle"></i> Refreshing GitLab Data</h5>
 							<p>{ apiError }</p>
@@ -141,26 +161,50 @@ templ Settings(username string, treeView bool, caching bool, apiError string, gi
 							</div>
 						</div>
 					} else {
-						<form method="POST" action="/settings" id="projectsForm">
-							<input type="hidden" name="form_type" value="projects"/>
+                        <form method="POST" action="/settings" id="projectsForm">
+                            <input type="hidden" name="form_type" value="projects"/>
 
-							if treeView {
-								<!-- Group Tree View -->
-								<div class="project-list mb-3">
-									if len(groupTree) > 0 {
-										<div class="list-group group-tree">
-											@renderGroups(groupTree)
-										</div>
-									} else {
-										<div class="text-center py-4">
-											<div class="alert alert-info">
-												<p><strong>No data available:</strong> No group data is available in the database.</p>
-												<p>Please click the "Refresh Data" button to load the GitLab structure.</p>
-											</div>
-										</div>
-									}
-								</div>
-							} else {
+                            if treeView {
+                                <!-- Search box with HTMX -->
+                                <div class="search-box mb-3">
+                                    <div class="input-group">
+                                        <span class="input-group-text">
+                                            <i class="bi bi-search"></i>
+                                        </span>
+                                        <input type="text" class="form-control"
+                                               id="searchInput"
+                                               name="search"
+                                               placeholder="Search for groups or projects..."
+                                               value={ searchTerm }
+                                               hx-get="/settings"
+                                               hx-trigger="keyup changed delay:500ms"
+                                               hx-target="#group-tree-container"
+                                               hx-include="[name='search']"/>
+                                        <button class="btn btn-outline-secondary" type="button"
+                                                hx-get="/settings"
+                                                hx-target="#group-tree-container"
+                                                onclick="document.getElementById('searchInput').value = ''">
+                                            <i class="bi bi-x"></i>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Group Tree View -->
+                                <div class="project-list mb-3">
+                                    <div id="group-tree-container" class="list-group group-tree">
+                                        if len(groupTree) > 0 {
+                                            @renderGroups(groupTree)
+                                        } else {
+                                            <div class="text-center py-4">
+                                                <div class="alert alert-info">
+                                                    <p><strong>No data available:</strong> No group data is available in the database.</p>
+                                                    <p>Please click the "Refresh Data" button to load the GitLab structure.</p>
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            } else {
 								<!-- Flat Project List View -->
 								<div class="project-list">
 									<div class="list-group">
@@ -183,99 +227,131 @@ templ Settings(username string, treeView bool, caching bool, apiError string, gi
 									</div>
 								</div>
 							}
-
-							<div class="mt-4 d-flex justify-content-between">
-								<div></div>
-								<button type="submit" class="btn btn-primary">Save Settings</button>
-							</div>
-						</form>
-					}
-				</div>
-			</div>
-		</div>
-	</body>
-	</html>
+                            <div class="mt-4 d-flex justify-content-between">
+                                <div></div>
+                                <button type="submit" class="btn btn-primary">Save Settings</button>
+                            </div>
+                        </form>
+                    }
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
 }
 
 templ renderGroups(groups []models.Group) {
-	for _, group := range groups {
-		<div class="group-item">
-			<!-- Group header -->
-			if group.Level > 0 {
-				<div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center indented-item" style={ "padding-left: " + strconv.Itoa(group.Level*20) + "px" }>
-					<div>
-						if group.HasChildren {
-							if group.Expanded {
-								<a href={ templ.SafeURL("/settings?action=collapse&groupID=" + strconv.Itoa(group.ID)) } class="text-decoration-none me-2">
-									<i class="bi bi-dash-square"></i>
-								</a>
-							} else {
-								<a href={ templ.SafeURL("/settings?action=expand&groupID=" + strconv.Itoa(group.ID)) } class="text-decoration-none me-2">
-									<i class="bi bi-plus-square"></i>
-								</a>
-							}
-						} else {
-							<i class="bi bi-folder me-2 text-muted"></i>
-						}
-						<strong>{ group.Name }</strong>
-						<span class="text-muted ms-2">({ group.FullPath })</span>
-					</div>
-					<span class="badge bg-primary rounded-pill">
-						{ strconv.Itoa(len(group.Projects)) } project
-						if len(group.Projects) != 1 {
-							s
-						}
-					</span>
-				</div>
-			} else {
-				<div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" style={ "padding-left: " + strconv.Itoa(group.Level*20) + "px" }>
-					<div>
-						if group.HasChildren {
-							if group.Expanded {
-								<a href={ templ.SafeURL("/settings?action=collapse&groupID=" + strconv.Itoa(group.ID)) } class="text-decoration-none me-2">
-									<i class="bi bi-dash-square"></i>
-								</a>
-							} else {
-								<a href={ templ.SafeURL("/settings?action=expand&groupID=" + strconv.Itoa(group.ID)) } class="text-decoration-none me-2">
-									<i class="bi bi-plus-square"></i>
-								</a>
-							}
-						} else {
-							<i class="bi bi-folder me-2 text-muted"></i>
-						}
-						<strong>{ group.Name }</strong>
-						<span class="text-muted ms-2">({ group.FullPath })</span>
-					</div>
-					<span class="badge bg-primary rounded-pill">
-						{ strconv.Itoa(len(group.Projects)) } project
-						if len(group.Projects) != 1 {
-							s
-						}
-					</span>
-				</div>
-			}
+    for _, group := range groups {
+        <div class="group-item">
+            <!-- Group header with checkbox using HTMX -->
+            if group.Level > 0 {
+                <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center indented-item"
+                     style={ "padding-left: " + strconv.Itoa(group.Level*20) + "px" }>
+                    <div class="d-flex align-items-center">
+                        <!-- Group selection checkbox with HTMX -->
+                        <div class="form-check me-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id={ "group-" + strconv.Itoa(group.ID) }
+                                   checked?={ group.Selected }
+                                   hx-get={ "/settings?action=select&groupID=" + strconv.Itoa(group.ID) + "&select=" + strconv.FormatBool(!group.Selected) }
+                                   hx-target="#group-tree-container"/>
+                        </div>
 
-			if group.Expanded {
-				<!-- Projects in this group -->
-				for _, project := range group.Projects {
-					if project.Level > 0 {
-						<label class="list-group-item indented-item" style={ "padding-left: " + strconv.Itoa(project.Level*20 + 20) + "px" }>
-							<input class="form-check-input me-2" type="checkbox" name="projects" value={ strconv.Itoa(project.ID) } checked?={ project.Selected }/>
-							<strong>{ project.Name }</strong>
-							<div class="text-muted small">{ project.PathWithNamespace }</div>
-						</label>
-					} else {
-						<label class="list-group-item" style={ "padding-left: " + strconv.Itoa(project.Level*20 + 20) + "px" }>
-							<input class="form-check-input me-2" type="checkbox" name="projects" value={ strconv.Itoa(project.ID) } checked?={ project.Selected }/>
-							<strong>{ project.Name }</strong>
-							<div class="text-muted small">{ project.PathWithNamespace }</div>
-						</label>
-					}
-				}
+                        <!-- Expand/collapse control -->
+                        if group.HasChildren {
+                            if group.Expanded {
+                                <a href={ templ.SafeURL("/settings?action=collapse&groupID=" + strconv.Itoa(group.ID)) }
+                                   class="text-decoration-none me-2"
+                                   hx-get={ "/settings?action=collapse&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-target="#group-tree-container">
+                                    <i class="bi bi-dash-square"></i>
+                                </a>
+                            } else {
+                                <a href={ templ.SafeURL("/settings?action=expand&groupID=" + strconv.Itoa(group.ID)) }
+                                   class="text-decoration-none me-2"
+                                   hx-get={ "/settings?action=expand&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-target="#group-tree-container">
+                                    <i class="bi bi-plus-square"></i>
+                                </a>
+                            }
+                        } else {
+                            <i class="bi bi-folder me-2 text-muted"></i>
+                        }
+                        <strong>{ group.Name }</strong>
+                        <span class="text-muted ms-2">({ group.FullPath })</span>
+                    </div>
+                    <span class="badge bg-primary rounded-pill">
+                        { strconv.Itoa(len(group.Projects)) } project
+                        if len(group.Projects) != 1 {
+                            s
+                        }
+                    </span>
+                </div>
+            } else {
+                <!-- Same as above but without indentation for top-level groups -->
+                <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                    <div class="d-flex align-items-center">
+                        <!-- Group selection checkbox with HTMX -->
+                        <div class="form-check me-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id={ "group-" + strconv.Itoa(group.ID) }
+                                   checked?={ group.Selected }
+                                   hx-get={ "/settings?action=select&groupID=" + strconv.Itoa(group.ID) + "&select=" + strconv.FormatBool(!group.Selected) }
+                                   hx-target="#group-tree-container"/>
+                        </div>
 
-				<!-- Recursively render subgroups -->
-				@renderGroups(group.Subgroups)
-			}
-		</div>
-	}
+                        <!-- Expand/collapse control -->
+                        if group.HasChildren {
+                            if group.Expanded {
+                                <a href="#"
+                                   class="text-decoration-none me-2"
+                                   hx-get={ "/settings?action=collapse&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-target="#group-tree-container">
+                                    <i class="bi bi-dash-square"></i>
+                                </a>
+                            } else {
+                                <a href="#"
+                                   class="text-decoration-none me-2"
+                                   hx-get={ "/settings?action=expand&groupID=" + strconv.Itoa(group.ID) }
+                                   hx-target="#group-tree-container">
+                                    <i class="bi bi-plus-square"></i>
+                                </a>
+                            }
+                        } else {
+                            <i class="bi bi-folder me-2 text-muted"></i>
+                        }
+                        <strong>{ group.Name }</strong>
+                        <span class="text-muted ms-2">({ group.FullPath })</span>
+                    </div>
+                    <span class="badge bg-primary rounded-pill">
+                        { strconv.Itoa(len(group.Projects)) } project
+                        if len(group.Projects) != 1 {
+                            s
+                        }
+                    </span>
+                </div>
+            }
+
+            if group.Expanded {
+                <!-- Projects in this group -->
+                for _, project := range group.Projects {
+                    <label class="list-group-item indented-item"
+                           style={ "padding-left: " + strconv.Itoa(project.Level*20 + 20) + "px" }>
+                        <input class="form-check-input me-2"
+                               type="checkbox"
+                               name="projects"
+                               value={ strconv.Itoa(project.ID) }
+                               checked?={ project.Selected }/>
+                        <strong>{ project.Name }</strong>
+                        <div class="text-muted small">{ project.PathWithNamespace }</div>
+                    </label>
+                }
+
+                <!-- Recursively render subgroups -->
+                @renderGroups(group.Subgroups)
+            }
+        </div>
+    }
 }

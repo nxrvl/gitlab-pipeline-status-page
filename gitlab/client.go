@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -394,4 +395,163 @@ func storeInDatabase(db *bun.DB, userID int64, groups []models.Group, projects [
 	// Implementation to store data in database
 	// This should be moved to the db package in a proper implementation
 	return nil
+}
+
+// Enhanced buildNestedGroupTree function
+func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []models.CachedProject, searchTerm string) []models.Group {
+	// Create maps for quick lookup
+	groupByID := make(map[int]models.Group)
+	groupByPath := make(map[string]models.Group)
+
+	// First create all groups
+	for _, cg := range cachedGroups {
+		// Apply search filter if provided
+		if searchTerm != "" && !strings.Contains(strings.ToLower(cg.Name+cg.FullPath), strings.ToLower(searchTerm)) {
+			continue
+		}
+
+		group := models.Group{
+			ID:          cg.ID,
+			Name:        cg.Name,
+			Path:        cg.Path,
+			FullPath:    cg.FullPath,
+			WebURL:      cg.WebURL,
+			ParentID:    cg.ParentID,
+			Subgroups:   []models.Group{},
+			Projects:    []models.Project{},
+			Level:       0,
+			HasChildren: false,
+			Expanded:    true,
+			Selected:    false, // Add selection state for groups
+		}
+
+		groupByID[group.ID] = group
+		groupByPath[group.FullPath] = group
+	}
+
+	// Create a map of projects by their group's full path
+	projectsByPath := make(map[string][]models.Project)
+
+	// Process all projects
+	for _, cp := range cachedProjects {
+		// Apply search filter
+		if searchTerm != "" && !strings.Contains(strings.ToLower(cp.Name+cp.PathWithNamespace), strings.ToLower(searchTerm)) {
+			continue
+		}
+
+		project := models.Project{
+			ID:                cp.ID,
+			Name:              cp.Name,
+			NameWithNamespace: cp.NameWithNamespace,
+			Path:              cp.Path,
+			PathWithNamespace: cp.PathWithNamespace,
+			WebURL:            cp.WebURL,
+			Level:             0,
+			Selected:          false,
+		}
+
+		// Get group path from project path
+		parts := strings.Split(cp.PathWithNamespace, "/")
+		if len(parts) > 1 {
+			groupPath := strings.Join(parts[:len(parts)-1], "/")
+			projectsByPath[groupPath] = append(projectsByPath[groupPath], project)
+		} else {
+			// Handle projects in root (if any)
+			projectsByPath[""] = append(projectsByPath[""], project)
+		}
+	}
+
+	// Build the actual tree structure
+	var rootGroups []models.Group
+
+	// Process groups to build the hierarchy
+	for _, cg := range cachedGroups {
+		if _, exists := groupByID[cg.ID]; !exists {
+			continue // Skip if filtered out by search
+		}
+
+		group := groupByID[cg.ID]
+
+		// Add projects to this group
+		if projects, exists := projectsByPath[cg.FullPath]; exists {
+			group.Projects = projects
+			group.HasChildren = true
+		}
+
+		// If it's a top-level group, add to root groups
+		if !strings.Contains(cg.FullPath, "/") {
+			rootGroups = append(rootGroups, group)
+			continue
+		}
+
+		// Otherwise, find its parent and add it as a subgroup
+		lastSlashIndex := strings.LastIndex(cg.FullPath, "/")
+		if lastSlashIndex > 0 {
+			parentPath := cg.FullPath[:lastSlashIndex]
+			if parent, exists := groupByPath[parentPath]; exists {
+				parent.Subgroups = append(parent.Subgroups, group)
+				parent.HasChildren = true
+				groupByPath[parentPath] = parent
+			}
+		}
+	}
+
+	// Set levels and update the groups recursively
+	setGroupLevels(rootGroups, 0)
+
+	// Update the root groups list with the modified ones
+	for i, group := range rootGroups {
+		if updatedGroup, exists := groupByPath[group.FullPath]; exists {
+			rootGroups[i] = updatedGroup
+		}
+	}
+
+	return rootGroups
+}
+
+// Process selection state
+func markSelectedProjectsAndGroups(groups []models.Group, selectedProjectMap map[int]bool) {
+	for i := range groups {
+		// Mark projects as selected based on the map
+		allProjectsSelected := len(groups[i].Projects) > 0
+		for j := range groups[i].Projects {
+			if selectedProjectMap[groups[i].Projects[j].ID] {
+				groups[i].Projects[j].Selected = true
+			} else {
+				allProjectsSelected = false
+			}
+		}
+
+		// Process subgroups recursively
+		allSubgroupsSelected := true
+		if len(groups[i].Subgroups) > 0 {
+			markSelectedProjectsAndGroups(groups[i].Subgroups, selectedProjectMap)
+
+			// Check if all subgroups are selected
+			for _, subgroup := range groups[i].Subgroups {
+				if !subgroup.Selected {
+					allSubgroupsSelected = false
+					break
+				}
+			}
+		}
+
+		// A group is selected if all its projects and all its subgroups are selected
+		groups[i].Selected = allProjectsSelected && allSubgroupsSelected &&
+			(len(groups[i].Projects) > 0 || len(groups[i].Subgroups) > 0)
+	}
+}
+
+func setGroupLevels(groups []models.Group, level int) {
+	for i := range groups {
+		groups[i].Level = level
+
+		// Set level for projects
+		for j := range groups[i].Projects {
+			groups[i].Projects[j].Level = level + 1
+		}
+
+		// Recursively set level for subgroups
+		setGroupLevels(groups[i].Subgroups, level+1)
+	}
 }

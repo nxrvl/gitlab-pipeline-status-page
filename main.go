@@ -119,6 +119,9 @@ func main() {
 	e.GET("/settings", func(c echo.Context) error {
 		return handlers.SettingsPageHandler(c, store, gitlabURL)
 	})
+	e.GET("/render-groups", func(c echo.Context) error {
+		return handlers.RenderGroupsHandler(c, store, gitlabURL)
+	})
 	e.GET("/settings/projects", func(c echo.Context) error {
 		return handlers.ProjectsPageHandler(c, store, gitlabURL)
 	})

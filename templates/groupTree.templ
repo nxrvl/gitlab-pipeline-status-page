@@ -1,0 +1,10 @@
+package templates
+
+import (
+    "gitlab-status/models"
+
+)
+
+templ RenderGroups(groups []models.Group) {
+    @renderGroups(groups)
+}

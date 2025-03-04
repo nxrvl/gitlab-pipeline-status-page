@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -20,18 +19,20 @@ import (
 // SettingsPageHandler handles the settings page request with templ
 func SettingsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL string) error {
 	session, _ := store.Get(c.Request(), "gitlab-status-session")
-
-	// Get user ID from session
 	userID, ok := session.Values["user_id"].(int64)
 	if !ok {
 		return c.Redirect(http.StatusSeeOther, "/logout")
 	}
 
-	// Check for action parameter (expand/collapse)
+	// Get search term
+	searchTerm := c.QueryParam("search")
+
+	// Check for action parameter (expand/collapse/select)
 	action := c.QueryParam("action")
 	groupIDStr := c.QueryParam("groupID")
+	selectState := c.QueryParam("select")
 
-	// Load all cached groups
+	// Load all cached groups and projects
 	cachedGroups, err := db.GetCachedGroups()
 	if err != nil {
 		log.Printf("Error loading groups from cache: %v", err)
@@ -39,28 +40,14 @@ func SettingsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL 
 			session.Values["username"].(string),
 			true,
 			false,
-			fmt.Sprintf("Error loading groups from cache: %v", err),
+			"Failed to load groups from cache: "+err.Error(),
 			gitlabURL,
 			nil,
 			nil,
+			"",
 		).Render(c.Request().Context(), c.Response().Writer)
 	}
 
-	// If we have no cached groups, show caching in progress message
-	if len(cachedGroups) == 0 {
-		log.Printf("No cached groups found for user %d, initiating cache...", userID)
-		return templates.Settings(
-			session.Values["username"].(string),
-			true,
-			true,
-			"Loading GitLab structure. This may take a while. Please refresh in a few minutes.",
-			gitlabURL,
-			nil,
-			nil,
-		).Render(c.Request().Context(), c.Response().Writer)
-	}
-
-	// Load all cached projects
 	cachedProjects, err := db.GetCachedProjects()
 	if err != nil {
 		log.Printf("Error loading projects from cache: %v", err)
@@ -68,39 +55,53 @@ func SettingsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL 
 			session.Values["username"].(string),
 			true,
 			false,
-			fmt.Sprintf("Error loading projects from cache: %v", err),
+			"Failed to load projects from cache: "+err.Error(),
 			gitlabURL,
 			nil,
 			nil,
+			"",
 		).Render(c.Request().Context(), c.Response().Writer)
 	}
 
-	// Build path-based tree structure
-	groupTree := buildNestedGroupTree(cachedGroups, cachedProjects)
+	// Build path-based tree structure with search filter
+	groupTree := buildNestedGroupTree(cachedGroups, cachedProjects, searchTerm)
 
 	// If this is an expand/collapse action, update the tree
-	if action != "" && groupIDStr != "" {
+	if (action == "expand" || action == "collapse") && groupIDStr != "" {
 		groupID, err := strconv.Atoi(groupIDStr)
 		if err == nil {
-			// Update expanded state using recursive function
 			updateGroupExpandState(groupTree, groupID, action == "expand")
 		}
 	}
 
-	// Get currently selected projects from database
-	selectedProjects, err := db.GetSelectedProjects(userID)
-	if err != nil {
-		log.Printf("Error fetching selected projects: %v", err)
+	// Handle group selection action
+	if action == "select" && groupIDStr != "" {
+		groupID, err := strconv.Atoi(groupIDStr)
+		if err == nil {
+			isSelected := selectState == "true"
+			processGroupSelection(groupTree, groupID, isSelected)
+
+			// If it's an HTMX request, return only the updated tree
+			if c.Request().Header.Get("HX-Request") == "true" {
+				return templates.RenderGroups(groupTree).Render(c.Request().Context(), c.Response().Writer)
+			}
+		}
 	}
 
-	// Create a map for faster lookup
+	// Get currently selected projects from database
+	selectedProjects, _ := db.GetSelectedProjects(userID)
 	selectedProjectMap := make(map[int]bool)
 	for _, sp := range selectedProjects {
 		selectedProjectMap[sp.ProjectID] = true
 	}
 
 	// Mark selected projects in the tree
-	markSelectedProjects(groupTree, selectedProjectMap)
+	markSelectedProjectsAndGroups(groupTree, selectedProjectMap)
+
+	// For HTMX search requests, only return the tree
+	if searchTerm != "" && c.Request().Header.Get("HX-Request") == "true" {
+		return templates.RenderGroups(groupTree).Render(c.Request().Context(), c.Response().Writer)
+	}
 
 	return templates.Settings(
 		session.Values["username"].(string),
@@ -110,7 +111,51 @@ func SettingsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL 
 		gitlabURL,
 		groupTree,
 		nil,
+		searchTerm,
 	).Render(c.Request().Context(), c.Response().Writer)
+}
+
+func processGroupSelection(groups []models.Group, targetID int, selected bool) bool {
+	for i := range groups {
+		if groups[i].ID == targetID {
+			// Set this group's selection
+			groups[i].Selected = selected
+
+			// Propagate to all projects
+			for j := range groups[i].Projects {
+				groups[i].Projects[j].Selected = selected
+			}
+
+			// Recursively propagate to subgroups
+			for j := range groups[i].Subgroups {
+				selectGroupAndChildren(&groups[i].Subgroups[j], selected)
+			}
+
+			return true
+		}
+
+		// Check subgroups recursively
+		if processGroupSelection(groups[i].Subgroups, targetID, selected) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Helper to select/deselect a group and all its children
+func selectGroupAndChildren(group *models.Group, selected bool) {
+	group.Selected = selected
+
+	// Select/deselect all projects
+	for i := range group.Projects {
+		group.Projects[i].Selected = selected
+	}
+
+	// Recursively select/deselect all subgroups
+	for i := range group.Subgroups {
+		selectGroupAndChildren(&group.Subgroups[i], selected)
+	}
 }
 
 // ProjectsPageHandler handles the projects page request
@@ -140,6 +185,7 @@ func ProjectsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL 
 			gitlabURL,
 			nil,
 			nil,
+			"",
 		).Render(c.Request().Context(), c.Response().Writer)
 	}
 
@@ -159,6 +205,7 @@ func ProjectsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL 
 			gitlabURL,
 			nil,
 			nil,
+			"",
 		).Render(c.Request().Context(), c.Response().Writer)
 	}
 
@@ -211,6 +258,7 @@ func ProjectsPageHandler(c echo.Context, store *sessions.CookieStore, gitlabURL 
 		gitlabURL,
 		nil,
 		allProjects,
+		"",
 	).Render(c.Request().Context(), c.Response().Writer)
 }
 
@@ -255,14 +303,13 @@ func CacheHandler(c echo.Context, store *sessions.CookieStore, gitlabURL, token 
 		gitlabURL,
 		nil,
 		nil,
+		"",
 	).Render(c.Request().Context(), c.Response().Writer)
 }
 
 // SaveSettingsHandler handles the form submission to save settings
 func SaveSettingsHandler(c echo.Context, store *sessions.CookieStore) error {
 	session, _ := store.Get(c.Request(), "gitlab-status-session")
-
-	// Get user ID from session
 	userID, ok := session.Values["user_id"].(int64)
 	if !ok {
 		return c.Redirect(http.StatusSeeOther, "/logout")
@@ -282,17 +329,27 @@ func SaveSettingsHandler(c echo.Context, store *sessions.CookieStore) error {
 		return c.String(http.StatusInternalServerError, "Failed to save settings: "+err.Error())
 	}
 
+	// If it's an HTMX request, return success message
+	if c.Request().Header.Get("HX-Request") == "true" {
+		return c.HTML(http.StatusOK, "<div class='alert alert-success'>Settings saved successfully!</div>")
+	}
+
 	return c.Redirect(http.StatusSeeOther, "/")
 }
 
 // buildNestedGroupTree builds a proper nested group tree based on full path
-func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []models.CachedProject) []models.Group {
+func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []models.CachedProject, searchTerm string) []models.Group {
 	// Create maps for quick lookup
 	groupByID := make(map[int]models.Group)
 	groupByPath := make(map[string]models.Group)
 
 	// First create all groups
 	for _, cg := range cachedGroups {
+		// Apply search filter if provided
+		if searchTerm != "" && !strings.Contains(strings.ToLower(cg.Name+cg.FullPath), strings.ToLower(searchTerm)) {
+			continue
+		}
+
 		group := models.Group{
 			ID:          cg.ID,
 			Name:        cg.Name,
@@ -304,7 +361,8 @@ func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []mo
 			Projects:    []models.Project{},
 			Level:       0,
 			HasChildren: false,
-			Expanded:    true, // Default expanded for top-level
+			Expanded:    true,  // Default expanded for top-level
+			Selected:    false, // Add selection state for groups
 		}
 
 		groupByID[group.ID] = group
@@ -316,6 +374,11 @@ func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []mo
 
 	// Process all projects
 	for _, cp := range cachedProjects {
+		// Apply search filter
+		if searchTerm != "" && !strings.Contains(strings.ToLower(cp.Name+cp.PathWithNamespace), strings.ToLower(searchTerm)) {
+			continue
+		}
+
 		project := models.Project{
 			ID:                cp.ID,
 			Name:              cp.Name,
@@ -348,6 +411,10 @@ func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []mo
 
 	// Process groups to build the hierarchy
 	for _, cg := range cachedGroups {
+		if _, exists := groupByID[cg.ID]; !exists {
+			continue // Skip if filtered out by search
+		}
+
 		group := groupByID[cg.ID]
 
 		// Add projects to this group
@@ -387,6 +454,39 @@ func buildNestedGroupTree(cachedGroups []models.CachedGroup, cachedProjects []mo
 	return rootGroups
 }
 
+// markSelectedProjectsAndGroups recursively marks selected projects and groups
+func markSelectedProjectsAndGroups(groups []models.Group, selectedProjectMap map[int]bool) {
+	for i := range groups {
+		// Mark projects as selected based on the map
+		allProjectsSelected := len(groups[i].Projects) > 0
+		for j := range groups[i].Projects {
+			if selectedProjectMap[groups[i].Projects[j].ID] {
+				groups[i].Projects[j].Selected = true
+			} else {
+				allProjectsSelected = false
+			}
+		}
+
+		// Process subgroups recursively
+		allSubgroupsSelected := true
+		if len(groups[i].Subgroups) > 0 {
+			markSelectedProjectsAndGroups(groups[i].Subgroups, selectedProjectMap)
+
+			// Check if all subgroups are selected
+			for _, subgroup := range groups[i].Subgroups {
+				if !subgroup.Selected {
+					allSubgroupsSelected = false
+					break
+				}
+			}
+		}
+
+		// A group is selected if all its projects and all its subgroups are selected
+		groups[i].Selected = allProjectsSelected && allSubgroupsSelected &&
+			(len(groups[i].Projects) > 0 || len(groups[i].Subgroups) > 0)
+	}
+}
+
 // setGroupLevels recursively sets the correct level for each group and its children
 func setGroupLevels(groups []models.Group, level int) {
 	for i := range groups {
@@ -419,17 +519,33 @@ func updateGroupExpandState(groups []models.Group, targetID int, expanded bool) 
 	return false
 }
 
-// markSelectedProjects recursively marks selected projects in the tree
-func markSelectedProjects(groups []models.Group, selectedProjectMap map[int]bool) {
-	for i := range groups {
-		// Mark projects in this group
-		for j := range groups[i].Projects {
-			if selectedProjectMap[groups[i].Projects[j].ID] {
-				groups[i].Projects[j].Selected = true
-			}
-		}
-
-		// Recursively mark in subgroups
-		markSelectedProjects(groups[i].Subgroups, selectedProjectMap)
+func RenderGroupsHandler(c echo.Context, store *sessions.CookieStore, gitlabURL string) error {
+	session, _ := store.Get(c.Request(), "gitlab-status-session")
+	userID, ok := session.Values["user_id"].(int64)
+	if !ok {
+		return c.String(http.StatusUnauthorized, "Unauthorized")
 	}
+
+	// Get search term
+	searchTerm := c.QueryParam("search")
+
+	// Load all cached groups and projects
+	cachedGroups, _ := db.GetCachedGroups()
+	cachedProjects, _ := db.GetCachedProjects()
+
+	// Build path-based tree structure with search filter
+	groupTree := buildNestedGroupTree(cachedGroups, cachedProjects, searchTerm)
+
+	// Get currently selected projects from database
+	selectedProjects, _ := db.GetSelectedProjects(userID)
+	selectedProjectMap := make(map[int]bool)
+	for _, sp := range selectedProjects {
+		selectedProjectMap[sp.ProjectID] = true
+	}
+
+	// Mark selected projects in the tree
+	markSelectedProjectsAndGroups(groupTree, selectedProjectMap)
+
+	// Return only the tree component
+	return templates.RenderGroups(groupTree).Render(c.Request().Context(), c.Response().Writer)
 }
