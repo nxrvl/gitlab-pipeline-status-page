@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -50,6 +51,8 @@ func createTables() error {
 		(*models.SelectedProject)(nil),
 		(*models.CachedProject)(nil),
 		(*models.CachedGroup)(nil),
+		(*models.CachedRunner)(nil),
+		(*models.RunnerProject)(nil),
 	} {
 		_, err := DB.NewCreateTable().Model(model).IfNotExists().Exec(context.Background())
 		if err != nil {
@@ -284,4 +287,149 @@ func CountCachedItems() (int, int, error) {
 	}
 
 	return projectCount, groupCount, nil
+}
+
+// CacheRunnerData stores GitLab runner data in the database
+func CacheRunnerData(runners []models.Runner, runnerProjects map[int][]models.Project) error {
+	ctx := context.Background()
+
+	// Start a transaction
+	tx, err := DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %v", err)
+	}
+	defer tx.Rollback()
+
+	// Clear existing cached runners
+	_, err = tx.NewDelete().Model((*models.CachedRunner)(nil)).Where("1 = 1").Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to clear cached runners: %v", err)
+	}
+
+	// Clear existing runner-project associations
+	_, err = tx.NewDelete().Model((*models.RunnerProject)(nil)).Where("1 = 1").Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to clear runner projects: %v", err)
+	}
+
+	// Insert all runners
+	for _, runner := range runners {
+		// Convert tag list to comma-separated string
+		tagListStr := ""
+		if len(runner.TagList) > 0 {
+			tagListStr = strings.Join(runner.TagList, ",")
+		}
+
+		cachedRunner := models.CachedRunner{
+			ID:              runner.ID,
+			UserID:          0, // 0 means available to all users
+			Description:     runner.Description,
+			RunnerType:      runner.RunnerType,
+			IsShared:        runner.IsShared,
+			Paused:          runner.Paused,
+			Online:          runner.Online,
+			Status:          runner.Status,
+			AccessLevel:     runner.AccessLevel,
+			MaintenanceNote: runner.MaintenanceNote,
+			TagList:         tagListStr,
+			MaximumTimeout:  runner.MaximumTimeout,
+			ContactedAt:     runner.ContactedAt,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+
+		_, err = tx.NewInsert().Model(&cachedRunner).Exec(ctx)
+		if err != nil {
+			log.Printf("Error saving runner %d: %v", runner.ID, err)
+		}
+
+		// Insert runner-project associations - preferring embedded projects if available
+		var projects []models.Project
+		if runner.Projects != nil && len(runner.Projects) > 0 {
+			projects = runner.Projects
+		} else if projList, ok := runnerProjects[runner.ID]; ok {
+			projects = projList
+		}
+
+		for _, project := range projects {
+			runnerProject := models.RunnerProject{
+				RunnerID:  runner.ID,
+				ProjectID: project.ID,
+				CreatedAt: time.Now(),
+			}
+
+			_, err = tx.NewInsert().Model(&runnerProject).Exec(ctx)
+			if err != nil {
+				log.Printf("Error saving runner-project association %d-%d: %v",
+					runner.ID, project.ID, err)
+			}
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %v", err)
+	}
+
+	return nil
+}
+
+// GetProjectsWithRunners returns projects that have runners attached
+func GetProjectsWithRunners(userID int64) ([]models.ProjectWithRunner, error) {
+	ctx := context.Background()
+
+	// Get all runner-project associations
+	var runnerProjects []models.RunnerProject
+	err := DB.NewSelect().Model(&runnerProjects).Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching runner projects: %v", err)
+	}
+
+	// Create a map to count runners per project
+	projectRunnerMap := make(map[int][]int)
+	for _, rp := range runnerProjects {
+		projectRunnerMap[rp.ProjectID] = append(projectRunnerMap[rp.ProjectID], rp.RunnerID)
+	}
+
+	// Get selected projects for monitoring
+	selectedProjects, err := GetSelectedProjects(userID)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching selected projects: %v", err)
+	}
+
+	// Create a map for quick lookup of selected projects
+	selectedProjectMap := make(map[int]bool)
+	for _, sp := range selectedProjects {
+		selectedProjectMap[sp.ProjectID] = true
+	}
+
+	// Fetch all cached projects
+	var cachedProjects []models.CachedProject
+	err = DB.NewSelect().Model(&cachedProjects).Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching cached projects: %v", err)
+	}
+
+	// Create result slice with only projects that have runners
+	var projectsWithRunners []models.ProjectWithRunner
+	for _, cp := range cachedProjects {
+		if runners, hasRunners := projectRunnerMap[cp.ID]; hasRunners {
+			project := models.ProjectWithRunner{
+				Project: models.Project{
+					ID:                cp.ID,
+					Name:              cp.Name,
+					NameWithNamespace: cp.NameWithNamespace,
+					Path:              cp.Path,
+					PathWithNamespace: cp.PathWithNamespace,
+					WebURL:            cp.WebURL,
+				},
+				RunnerCount: len(runners),
+				RunnerIDs:   runners,
+				IsMonitored: selectedProjectMap[cp.ID],
+			}
+			projectsWithRunners = append(projectsWithRunners, project)
+		}
+	}
+
+	return projectsWithRunners, nil
 }

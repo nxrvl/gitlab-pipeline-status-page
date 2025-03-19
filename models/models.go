@@ -126,3 +126,66 @@ type CachedGroup struct {
 	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp"`
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp"`
 }
+
+// Runner represents a GitLab runner.
+type Runner struct {
+	ID              int       `json:"id"`
+	Description     string    `json:"description"`
+	Active          bool      `json:"active"` // Deprecated, using Paused instead
+	Paused          bool      `json:"paused"`
+	IPAddress       string    `json:"ip_address"` // Deprecated in GitLab 16.1
+	IsShared        bool      `json:"is_shared"`
+	RunnerType      string    `json:"runner_type"`
+	Name            string    `json:"name"`
+	Online          bool      `json:"online"`
+	Status          string    `json:"status"`
+	ContactedAt     time.Time `json:"contacted_at"`
+	MaintenanceNote string    `json:"maintenance_note"`
+	TagList         []string  `json:"tag_list"`
+	Version         string    `json:"version"`      // Deprecated in GitLab 17.0
+	Revision        string    `json:"revision"`     // Deprecated in GitLab 17.0
+	Platform        string    `json:"platform"`     // Deprecated in GitLab 17.0
+	Architecture    string    `json:"architecture"` // Deprecated in GitLab 17.0
+	AccessLevel     string    `json:"access_level"`
+	MaximumTimeout  int       `json:"maximum_timeout"`
+	Projects        []Project `json:"projects,omitempty"`
+}
+
+// ProjectWithRunner extends Project with runner info
+type ProjectWithRunner struct {
+	Project
+	RunnerCount int   `json:"runner_count"`
+	RunnerIDs   []int `json:"runner_ids"`
+	IsMonitored bool  `json:"is_monitored"`
+}
+
+// CachedRunner represents a cached runner from GitLab
+type CachedRunner struct {
+	bun.BaseModel `bun:"table:cached_runners,alias:cr"`
+
+	ID              int       `bun:"id,pk"` // GitLab runner ID
+	UserID          int64     `bun:"user_id,notnull"`
+	Description     string    `bun:"description,notnull"`
+	RunnerType      string    `bun:"runner_type,notnull"`
+	IsShared        bool      `bun:"is_shared,notnull"`
+	Paused          bool      `bun:"paused,notnull"`
+	Online          bool      `bun:"online"`
+	Status          string    `bun:"status,notnull"`
+	AccessLevel     string    `bun:"access_level"`
+	MaintenanceNote string    `bun:"maintenance_note"`
+	TagList         string    `bun:"tag_list"` // Stored as comma-separated string
+	MaximumTimeout  int       `bun:"maximum_timeout"`
+	ContactedAt     time.Time `bun:"contacted_at"`
+	CreatedAt       time.Time `bun:"created_at,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time `bun:"updated_at,notnull,default:current_timestamp"`
+}
+
+// RunnerProject associates runners with projects
+type RunnerProject struct {
+	bun.BaseModel `bun:"table:runner_projects,alias:rp"`
+
+	ID        int64     `bun:"id,pk,autoincrement"`
+	RunnerID  int       `bun:"runner_id,notnull"`
+	ProjectID int       `bun:"project_id,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp"`
+}

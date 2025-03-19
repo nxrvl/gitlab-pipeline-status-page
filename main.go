@@ -137,6 +137,17 @@ func main() {
 	e.POST("/settings", func(c echo.Context) error {
 		return handlers.SaveSettingsHandler(c, store)
 	})
+	e.GET("/runners", func(c echo.Context) error {
+		return handlers.RunnersPageHandler(c, store, gitlabURL)
+	})
+
+	e.GET("/runners/refresh", func(c echo.Context) error {
+		return handlers.RefreshRunnersHandler(c, store, gitlabURL, token)
+	})
+
+	e.POST("/runners/save", func(c echo.Context) error {
+		return handlers.SaveRunnersSelectionHandler(c, store)
+	})
 
 	// Start the server
 	port := os.Getenv("PORT")
